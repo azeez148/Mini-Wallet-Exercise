@@ -22,8 +22,13 @@ class InitAPIView(APIView):
             'data': None,
             'status': 'failed'
         }
+
+        # Ideally this should return the existing user object.
         customer_xid = request.data.get('customer_xid')
         user_obj = User.objects.filter(username=customer_xid).first()
+
+        # for this testing purpose only, creating a test user for furthur process.
+        # Ideally this will not occur in a prod env.
         if not user_obj:
             user_obj = User.objects.create_user(customer_xid, 'test@test.com', 'testpassword')
             user_obj.last_name = 'testFirst'
@@ -126,15 +131,15 @@ class WalletDepositAPIView(APIView):
             'status': 'failed'
         }
 
-        amount_to_deposit = float(request.data.get("amount"))
-        reference_id = request.data.get("reference_id")
+        amount_to_deposit = float(request.data.get('amount'))
+        reference_id = request.data.get('reference_id')
 
         if amount_to_deposit < 0.0 :
-            result['message'] = '"Amount should be greater than 0.0.'
+            result['message'] = 'Amount should be greater than 0.0.'
             return Response(result)
 
         wallet = User.objects.filter(username=request.user)[0].wallet
-
+        deposit = None
         if wallet:
             try:
                 wallet.balance = wallet.balance + amount_to_deposit
@@ -145,7 +150,8 @@ class WalletDepositAPIView(APIView):
                 return Response(result)
             finally:
                 wallet.save()
-                deposit.save()
+                if deposit:
+                    deposit.save()
 
         if deposit:
             deposit_serializer = WalletDepositSerializer(deposit)
@@ -167,25 +173,34 @@ class WalletWithDrawalAPIView(APIView):
             'status': 'failed'
         }
 
-        amount_to_withdraw = float(request.data.get("amount"))
-        reference_id = request.data.get("reference_id")
+        amount_to_withdraw = float(request.data.get('amount'))
+        reference_id = request.data.get('reference_id')
 
         if amount_to_withdraw < 0.0 :
-            result['message'] = '"Amount should be greater than 0.0.'
+            result['message'] = 'Amount should be greater than 0.0.'
             return Response(result)
 
         wallet = User.objects.filter(username=request.user)[0].wallet
-     
-        if wallet:
-            try:
-                wallet.balance = wallet.balance - amount_to_withdraw
-                withdrawal = WalletWithdrawal.objects.create(withdrawn_by=wallet, status=True, withdrawn_at=datetime.datetime.now(), amount=amount_to_withdraw, reference_id=reference_id)
-            except IntegrityError:
-                wallet.balance = wallet.balance + amount_to_withdraw
-                result['message'] = 'Already applied this withdrawal.'
-                return Response(result)
-            finally:
-                wallet.save()
+
+        withdrawal = None
+        if not wallet:
+            result['message'] = 'Unexpected error.'
+            return Response(result)
+
+        if not wallet.balance - amount_to_withdraw >= 0.0 :
+            result['message'] = 'Withdrawal amount exceeds existing amount.'
+            return Response(result)
+
+        try:
+            wallet.balance = wallet.balance - amount_to_withdraw
+            withdrawal = WalletWithdrawal.objects.create(withdrawn_by=wallet, status=True, withdrawn_at=datetime.datetime.now(), amount=amount_to_withdraw, reference_id=reference_id)
+        except IntegrityError:
+            wallet.balance = wallet.balance + amount_to_withdraw
+            result['message'] = 'Already applied this withdrawal.'
+            return Response(result)
+        finally:
+            wallet.save()
+            if withdrawal:
                 withdrawal.save()
 
         if withdrawal:
